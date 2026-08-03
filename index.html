@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0a">
+  <title>Collapse Tickets</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+</head>
+<body>
+  <div class="noise"></div>
+
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <div class="brand">COLLAPSE</div>
+        <div class="event-name">PRIVATE PARTY VOL. V</div>
+      </div>
+      <button id="logoutBtn" class="ghost hidden">Esci</button>
+    </header>
+
+    <section id="setupView" class="panel setup-panel">
+      <p class="eyebrow">CONFIGURAZIONE INIZIALE</p>
+      <h1>Collega Supabase</h1>
+      <p class="muted">
+        Inserisci URL e chiave anon del progetto. Verranno salvati solo in questo browser.
+      </p>
+      <label>Supabase URL</label>
+      <input id="supabaseUrl" placeholder="https://xxxx.supabase.co">
+      <label>Supabase anon key</label>
+      <input id="supabaseKey" placeholder="eyJ...">
+      <button id="saveConfigBtn" class="primary">Salva configurazione</button>
+      <details>
+        <summary>Dove trovo questi dati?</summary>
+        <p class="muted small">Supabase → Project Settings → API → Project URL e anon public key.</p>
+      </details>
+    </section>
+
+    <section id="loginView" class="panel hidden">
+      <p class="eyebrow">ACCESSO STAFF</p>
+      <h1>Ingresso</h1>
+      <label>Email</label>
+      <input id="email" type="email" autocomplete="email" placeholder="staff@collapse.it">
+      <label>Password</label>
+      <input id="password" type="password" autocomplete="current-password" placeholder="••••••••">
+      <button id="loginBtn" class="primary">Accedi</button>
+      <button id="changeConfigBtn" class="ghost">Cambia configurazione</button>
+      <p id="loginMessage" class="message"></p>
+    </section>
+
+    <section id="appView" class="hidden">
+      <div class="stats-grid">
+        <article class="stat-card">
+          <span>INVITATI</span>
+          <strong id="totalCount">0</strong>
+        </article>
+        <article class="stat-card">
+          <span>ENTRATI</span>
+          <strong id="checkedCount">0</strong>
+        </article>
+        <article class="stat-card">
+          <span>MANCANO</span>
+          <strong id="remainingCount">0</strong>
+        </article>
+      </div>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="scanner">Scanner</button>
+        <button class="tab" data-tab="guests">Invitati</button>
+        <button class="tab" data-tab="create">Aggiungi</button>
+      </nav>
+
+      <section id="scannerTab" class="tab-panel">
+        <div class="panel">
+          <p class="eyebrow">CHECK-IN</p>
+          <h2>Scansiona QR</h2>
+          <div id="reader"></div>
+          <button id="startScannerBtn" class="primary">Avvia fotocamera</button>
+          <button id="stopScannerBtn" class="ghost hidden">Ferma scanner</button>
+
+          <div class="manual-check">
+            <label>Oppure inserisci il codice</label>
+            <div class="inline">
+              <input id="manualCode" placeholder="CPV5-XXXX-XXXX">
+              <button id="manualCheckBtn" class="secondary">Controlla</button>
+            </div>
+          </div>
+
+          <div id="scanResult" class="result hidden">
+            <div id="resultStatus" class="result-status"></div>
+            <h3 id="resultName"></h3>
+            <p id="resultMeta" class="muted"></p>
+            <button id="confirmEntryBtn" class="primary hidden">Conferma ingresso</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="guestsTab" class="tab-panel hidden">
+        <div class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">LISTA</p>
+              <h2>Invitati</h2>
+            </div>
+            <button id="refreshBtn" class="ghost">Aggiorna</button>
+          </div>
+
+          <input id="guestSearch" placeholder="Cerca nome, email o codice">
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Tipo</th>
+                  <th>Stato</th>
+                  <th>Codice</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="guestRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="createTab" class="tab-panel hidden">
+        <div class="panel">
+          <p class="eyebrow">NUOVO TICKET</p>
+          <h2>Aggiungi invitato</h2>
+          <label>Nome e cognome</label>
+          <input id="guestName" placeholder="Mario Rossi">
+          <label>Email (facoltativa)</label>
+          <input id="guestEmail" type="email" placeholder="mario@email.it">
+          <label>Categoria</label>
+          <select id="guestType">
+            <option>Guest</option>
+            <option>VIP</option>
+            <option>Staff</option>
+            <option>Artist</option>
+          </select>
+          <button id="createGuestBtn" class="primary">Crea biglietto</button>
+          <p id="createMessage" class="message"></p>
+
+          <div id="ticketPreview" class="ticket-preview hidden">
+            <div class="ticket-card">
+              <div class="ticket-logo">COLLAPSE</div>
+              <div class="ticket-sub">PRIVATE PARTY VOL. V</div>
+              <canvas id="ticketQr"></canvas>
+              <div id="ticketGuestName" class="ticket-name"></div>
+              <div id="ticketCode" class="ticket-code"></div>
+              <div class="ticket-info">29 AGOSTO 2026 · VILLA CAPPELLETTI</div>
+            </div>
+            <button id="downloadQrBtn" class="secondary">Scarica QR</button>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
