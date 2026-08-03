@@ -300,7 +300,14 @@ $("createGuestBtn").addEventListener("click", async () => {
   $("ticketPreview").classList.remove("hidden");
 
   const ticketUrl = `${location.origin}${location.pathname}?ticket=${encodeURIComponent(data.token)}`;
-  QRCode.toCanvas($("ticketQr"), ticketUrl, { width: 280, margin: 2 });
+  await QRCode.toCanvas($("ticketQr"), ticketUrl, {
+  width: 300,
+  margin: 2,
+  color: {
+    dark: "#000000",
+    light: "#ffffff"
+  }
+});
 
   $("guestName").value = "";
   $("guestEmail").value = "";
