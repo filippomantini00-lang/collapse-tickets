@@ -4,6 +4,8 @@ let html5QrCode = null;
 let currentTicket = null;
 let allGuests = [];
 let lastCreatedTicket = null;
+const ticketTemplate = new Image();
+ticketTemplate.src = "./ticket-template.jpg";
 
 const $ = (id) => document.getElementById(id);
 
@@ -231,7 +233,8 @@ function renderGuestRows(rows){
       <td><code>${escapeHtml(g.token)}</code></td>
       <td>
         <div class="row-actions">
-          <button class="secondary" onclick="openGuest('${g.token}')">Apri</button>
+          <button class="secondary" onclick="downloadGuestTicket('${g.token}')">Ticket</button>
+          <button class="ghost danger" onclick="deleteGuest('${g.token}', '${escapeHtml(g.guest_name).replaceAll("'", "&#39;")}')">Elimina</button>
           ${g.checked_in_at ? `<button class="ghost" onclick="resetGuest('${g.token}')">Reset</button>` : ""}
         </div>
       </td>
@@ -252,6 +255,42 @@ window.resetGuest = async (token) => {
   await refreshGuests();
 };
 
+
+window.downloadGuestTicket = async (token) => {
+  const ticket = allGuests.find(g => g.token === token);
+  if (!ticket) return alert("Invitato non trovato.");
+  try {
+    document.querySelector('[data-tab="create"]').click();
+    $("ticketPreview").classList.remove("hidden");
+    lastCreatedTicket = ticket;
+    await renderTicket(ticket);
+    await downloadTicket(ticket);
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+window.deleteGuest = async (token, guestName) => {
+  const safeName = guestName || token;
+  if (!confirm(`Eliminare definitivamente ${safeName}?`)) return;
+
+  const { error } = await supabaseClient.rpc("delete_ticket", {
+    p_token: token
+  });
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  if (lastCreatedTicket?.token === token) {
+    lastCreatedTicket = null;
+    $("ticketPreview").classList.add("hidden");
+  }
+
+  await refreshGuests();
+};
+
 $("guestSearch").addEventListener("input", e => {
   const q = e.target.value.trim().toLowerCase();
   const filtered = allGuests.filter(g =>
@@ -268,6 +307,100 @@ function generateToken(){
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const part = () => Array.from({length:4}, () => alphabet[Math.floor(Math.random()*alphabet.length)]).join("");
   return `CPV5-${part()}-${part()}`;
+}
+
+
+function loadImage(image){
+  if (image.complete && image.naturalWidth) return Promise.resolve(image);
+  return new Promise((resolve, reject) => {
+    image.addEventListener("load", () => resolve(image), { once: true });
+    image.addEventListener("error", () => reject(new Error("Impossibile caricare la grafica del ticket.")), { once: true });
+  });
+}
+
+function fitText(ctx, text, maxWidth, startSize, minSize = 28){
+  let size = startSize;
+  while (size >= minSize){
+    ctx.font = `700 ${size}px Arial, Helvetica, sans-serif`;
+    if (ctx.measureText(text).width <= maxWidth) return size;
+    size -= 2;
+  }
+  return minSize;
+}
+
+async function renderTicket(ticket){
+  await loadImage(ticketTemplate);
+
+  const canvas = $("ticketCanvas");
+  canvas.width = 1080;
+  canvas.height = 1920;
+  const ctx = canvas.getContext("2d");
+
+  ctx.drawImage(ticketTemplate, 0, 0, canvas.width, canvas.height);
+
+  const ticketUrl = `${location.origin}${location.pathname}?ticket=${encodeURIComponent(ticket.token)}`;
+  const qrCanvas = document.createElement("canvas");
+
+  new QRious({
+    element: qrCanvas,
+    value: ticketUrl,
+    size: 430,
+    level: "H",
+    foreground: "#10140d",
+    background: "#f3ead2",
+    padding: 18
+  });
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const name = ticket.guest_name.toUpperCase();
+  ctx.shadowColor = "rgba(0,0,0,.45)";
+  ctx.shadowBlur = 8;
+  ctx.fillStyle = "#f3ead2";
+  fitText(ctx, name, 880, 66, 38);
+  ctx.fillText(name, 540, 1055);
+
+  ctx.shadowBlur = 5;
+  ctx.fillStyle = "#f49a68";
+  ctx.font = "700 38px Arial, Helvetica, sans-serif";
+  const typeLabel = ticket.ticket_type.toUpperCase().includes("GUEST")
+    ? ticket.ticket_type.toUpperCase()
+    : `${ticket.ticket_type.toUpperCase()} GUEST`;
+  ctx.fillText(typeLabel, 540, 1122);
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "#f49a68";
+  ctx.lineWidth = 3;
+  ctx.setLineDash([14, 13]);
+  ctx.beginPath();
+  ctx.moveTo(145, 990);
+  ctx.lineTo(935, 990);
+  ctx.moveTo(145, 1175);
+  ctx.lineTo(935, 1175);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const qrX = 325;
+  const qrY = 1210;
+  const qrSize = 430;
+  ctx.fillStyle = "#f3ead2";
+  ctx.fillRect(qrX - 16, qrY - 16, qrSize + 32, qrSize + 32);
+  ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+
+  ctx.fillStyle = "#f49a68";
+  ctx.font = "700 30px Arial, Helvetica, sans-serif";
+  ctx.fillText(ticket.token, 540, 1690);
+
+  return canvas;
+}
+
+async function downloadTicket(ticket){
+  const canvas = await renderTicket(ticket);
+  const link = document.createElement("a");
+  link.download = `${ticket.token}-${ticket.guest_name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "")}.png`;
+  link.href = canvas.toDataURL("image/png", 1);
+  link.click();
 }
 
 $("createGuestBtn").addEventListener("click", async () => {
@@ -295,41 +428,21 @@ $("createGuestBtn").addEventListener("click", async () => {
 
   lastCreatedTicket = data;
   $("createMessage").textContent = "Biglietto creato.";
-  $("ticketGuestName").textContent = data.guest_name;
-  $("ticketCode").textContent = data.token;
   $("ticketPreview").classList.remove("hidden");
-
-  const ticketUrl = `${location.origin}${location.pathname}?ticket=${encodeURIComponent(data.token)}`;
-  const qrCanvas = $("ticketQr");
-  qrCanvas.width = 300;
-  qrCanvas.height = 300;
-
-  new QRious({
-    element: qrCanvas,
-    value: ticketUrl,
-    size: 300,
-    level: "H",
-    foreground: "#000000",
-    background: "#ffffff",
-    padding: 12
-  });
+  await renderTicket(data);
 
   $("guestName").value = "";
   $("guestEmail").value = "";
   await refreshGuests();
 });
 
-$("downloadQrBtn").addEventListener("click", () => {
+$("downloadTicketBtn").addEventListener("click", async () => {
   if (!lastCreatedTicket) return;
-  const canvas = $("ticketQr");
-  if (!canvas.width || !canvas.height) {
-    alert("QR non ancora pronto. Riprova.");
-    return;
+  try {
+    await downloadTicket(lastCreatedTicket);
+  } catch (error) {
+    alert(error.message);
   }
-  const link = document.createElement("a");
-  link.download = `${lastCreatedTicket.token}-${lastCreatedTicket.guest_name.replace(/\s+/g,"-")}.png`;
-  link.href = canvas.toDataURL("image/png");
-  link.click();
 });
 
 function escapeHtml(value){
