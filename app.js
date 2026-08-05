@@ -4,6 +4,8 @@ let html5QrCode = null;
 let currentTicket = null;
 let allGuests = [];
 let lastCreatedTicket = null;
+let activeCategory = "";
+const TICKET_CATEGORIES = ["Guest", "VIP", "Artist", "Staff", "Media", "Partner", "Sponsor", "DJ", "Altro"];
 const ticketTemplate = new Image();
 ticketTemplate.src = "./ticket-template.jpg";
 
@@ -211,7 +213,8 @@ async function refreshGuests(){
   }
   allGuests = data || [];
   renderStats();
-  renderGuestRows(allGuests);
+  populateCategoryFilter();
+  applyGuestFilters();
 }
 
 function renderStats(){
@@ -220,13 +223,37 @@ function renderStats(){
   $("totalCount").textContent = total;
   $("checkedCount").textContent = checked;
   $("remainingCount").textContent = total - checked;
+
+  const counts = {};
+  allGuests.forEach(g => {
+    const type = normalizeCategory(g.ticket_type);
+    counts[type] = (counts[type] || 0) + 1;
+  });
+
+  $("categoryStats").innerHTML = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([type, count]) => `
+      <button class="category-stat ${activeCategory === type ? "active" : ""}" data-category="${escapeHtml(type)}">
+        <span>${escapeHtml(type)}</span>
+        <strong>${count}</strong>
+      </button>
+    `).join("");
+
+  document.querySelectorAll(".category-stat").forEach(btn => {
+    btn.addEventListener("click", () => {
+      activeCategory = activeCategory === btn.dataset.category ? "" : btn.dataset.category;
+      $("categoryFilter").value = activeCategory;
+      renderStats();
+      applyGuestFilters();
+    });
+  });
 }
 
 function renderGuestRows(rows){
   $("guestRows").innerHTML = rows.map(g => `
     <tr>
       <td><strong>${escapeHtml(g.guest_name)}</strong><br><span class="muted">${escapeHtml(g.email || "")}</span></td>
-      <td>${escapeHtml(g.ticket_type)}</td>
+      <td><span class="category-badge category-${categorySlug(g.ticket_type)}">${escapeHtml(normalizeCategory(g.ticket_type))}</span></td>
       <td>${g.checked_in_at
         ? `<span class="badge ok">ENTRATO</span>`
         : `<span class="badge wait">IN ATTESA</span>`}</td>
@@ -291,14 +318,42 @@ window.deleteGuest = async (token, guestName) => {
   await refreshGuests();
 };
 
-$("guestSearch").addEventListener("input", e => {
-  const q = e.target.value.trim().toLowerCase();
-  const filtered = allGuests.filter(g =>
-    [g.guest_name, g.email, g.token, g.ticket_type]
+function normalizeCategory(value){
+  const raw = String(value || "Guest").trim();
+  const match = TICKET_CATEGORIES.find(c => c.toLowerCase() === raw.toLowerCase());
+  return match || raw || "Guest";
+}
+
+function categorySlug(value){
+  return normalizeCategory(value).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function populateCategoryFilter(){
+  const present = [...new Set(allGuests.map(g => normalizeCategory(g.ticket_type)))].sort();
+  const select = $("categoryFilter");
+  const current = activeCategory;
+  select.innerHTML = `<option value="">Tutte le categorie</option>` +
+    present.map(type => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`).join("");
+  select.value = current;
+}
+
+function applyGuestFilters(){
+  const q = $("guestSearch").value.trim().toLowerCase();
+  const filtered = allGuests.filter(g => {
+    const matchesText = !q || [g.guest_name, g.email, g.token, g.ticket_type]
       .filter(Boolean)
-      .some(v => v.toLowerCase().includes(q))
-  );
+      .some(v => String(v).toLowerCase().includes(q));
+    const matchesCategory = !activeCategory || normalizeCategory(g.ticket_type) === activeCategory;
+    return matchesText && matchesCategory;
+  });
   renderGuestRows(filtered);
+}
+
+$("guestSearch").addEventListener("input", applyGuestFilters);
+$("categoryFilter").addEventListener("change", e => {
+  activeCategory = e.target.value;
+  renderStats();
+  applyGuestFilters();
 });
 
 $("refreshBtn").addEventListener("click", refreshGuests);
@@ -328,10 +383,10 @@ function fitText(ctx, text, maxWidth, startSize, minSize = 28){
   return minSize;
 }
 
-async function renderTicket(ticket){
+async function renderTicket(ticket, targetCanvas = null){
   await loadImage(ticketTemplate);
 
-  const canvas = $("ticketCanvas");
+  const canvas = targetCanvas || $("ticketCanvas");
   canvas.width = 1080;
   canvas.height = 1920;
   const ctx = canvas.getContext("2d");
@@ -364,9 +419,7 @@ async function renderTicket(ticket){
   ctx.shadowBlur = 5;
   ctx.fillStyle = "#f49a68";
   ctx.font = "700 38px Arial, Helvetica, sans-serif";
-  const typeLabel = ticket.ticket_type.toUpperCase().includes("GUEST")
-    ? ticket.ticket_type.toUpperCase()
-    : `${ticket.ticket_type.toUpperCase()} GUEST`;
+  const typeLabel = normalizeCategory(ticket.ticket_type).toUpperCase();
   ctx.fillText(typeLabel, 540, 1122);
 
   ctx.shadowBlur = 0;
@@ -402,6 +455,123 @@ async function downloadTicket(ticket){
   link.href = canvas.toDataURL("image/png", 1);
   link.click();
 }
+
+
+function canvasToBlob(canvas){
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("Impossibile creare il file PNG.")), "image/png", 1);
+  });
+}
+
+function parseCsvLine(line, delimiter){
+  const result = [];
+  let current = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++){
+    const char = line[i];
+    if (char === '"'){
+      if (quoted && line[i + 1] === '"'){
+        current += '"';
+        i++;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === delimiter && !quoted){
+      result.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
+function parseGuestCsv(text){
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter(line => line.trim());
+  if (lines.length < 2) throw new Error("Il CSV non contiene invitati.");
+
+  const delimiter = lines[0].includes(";") ? ";" : ",";
+  const headers = parseCsvLine(lines[0], delimiter).map(h => h.trim().toLowerCase());
+
+  const findIndex = names => headers.findIndex(h => names.includes(h));
+  const nameIndex = findIndex(["nome", "name", "nome e cognome", "guest_name", "invitato"]);
+  const emailIndex = findIndex(["email", "e-mail", "mail"]);
+  const typeIndex = findIndex(["categoria", "tipo", "target", "ticket_type", "category"]);
+
+  if (nameIndex < 0) {
+    throw new Error('Nel CSV serve una colonna chiamata "nome".');
+  }
+
+  return lines.slice(1).map(line => {
+    const values = parseCsvLine(line, delimiter);
+    const guest_name = (values[nameIndex] || "").trim();
+    const email = emailIndex >= 0 ? (values[emailIndex] || "").trim() || null : null;
+    const ticket_type = typeIndex >= 0 ? normalizeCategory(values[typeIndex]) : "Guest";
+    return { guest_name, email, ticket_type };
+  }).filter(row => row.guest_name);
+}
+
+$("csvInput").addEventListener("change", async event => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  try {
+    $("bulkMessage").textContent = "Importazione in corso...";
+    const rows = parseGuestCsv(await file.text());
+    const tickets = rows.map(row => ({
+      ...row,
+      token: generateToken()
+    }));
+
+    const { error } = await supabaseClient.from("tickets").insert(tickets);
+    if (error) throw error;
+
+    $("bulkMessage").textContent = `${tickets.length} invitati importati correttamente.`;
+    await refreshGuests();
+  } catch (error) {
+    $("bulkMessage").textContent = error.message;
+  } finally {
+    event.target.value = "";
+  }
+});
+
+$("downloadAllTicketsBtn").addEventListener("click", async () => {
+  if (!allGuests.length) return alert("Non ci sono invitati.");
+
+  const button = $("downloadAllTicketsBtn");
+  const originalText = button.textContent;
+  button.disabled = true;
+
+  try {
+    const zip = new JSZip();
+    const folder = zip.folder("collapse-party-vol-v-tickets");
+
+    for (let i = 0; i < allGuests.length; i++){
+      const ticket = allGuests[i];
+      button.textContent = `Creo ticket ${i + 1}/${allGuests.length}`;
+      const canvas = document.createElement("canvas");
+      await renderTicket(ticket, canvas);
+      const blob = await canvasToBlob(canvas);
+      const safeName = ticket.guest_name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+      folder.file(`${safeName}-${ticket.token}.png`, blob);
+    }
+
+    button.textContent = "Creo file ZIP...";
+    const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(zipBlob);
+    link.download = "collapse-party-vol-v-tickets.zip";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 3000);
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+});
+
 
 $("createGuestBtn").addEventListener("click", async () => {
   const guest_name = $("guestName").value.trim();
