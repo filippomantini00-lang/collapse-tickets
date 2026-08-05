@@ -300,14 +300,19 @@ $("createGuestBtn").addEventListener("click", async () => {
   $("ticketPreview").classList.remove("hidden");
 
   const ticketUrl = `${location.origin}${location.pathname}?ticket=${encodeURIComponent(data.token)}`;
-  await QRCode.toCanvas($("ticketQr"), ticketUrl, {
-  width: 300,
-  margin: 2,
-  color: {
-    dark: "#000000",
-    light: "#ffffff"
-  }
-});
+  const qrCanvas = $("ticketQr");
+  qrCanvas.width = 300;
+  qrCanvas.height = 300;
+
+  new QRious({
+    element: qrCanvas,
+    value: ticketUrl,
+    size: 300,
+    level: "H",
+    foreground: "#000000",
+    background: "#ffffff",
+    padding: 12
+  });
 
   $("guestName").value = "";
   $("guestEmail").value = "";
@@ -317,6 +322,10 @@ $("createGuestBtn").addEventListener("click", async () => {
 $("downloadQrBtn").addEventListener("click", () => {
   if (!lastCreatedTicket) return;
   const canvas = $("ticketQr");
+  if (!canvas.width || !canvas.height) {
+    alert("QR non ancora pronto. Riprova.");
+    return;
+  }
   const link = document.createElement("a");
   link.download = `${lastCreatedTicket.token}-${lastCreatedTicket.guest_name.replace(/\s+/g,"-")}.png`;
   link.href = canvas.toDataURL("image/png");
